@@ -3,10 +3,15 @@ from datetime import datetime
 from weather_api import get_weather
 from db import init_db
 
+import spacy
+
 class ChatBot:
     def __init__(self):
+        self.nlp = spacy.load("ru_core_news_sm")
         self.patterns = []
         self._register_patterns()
+        self.last_intent = None
+        self.last_city = None
         init_db()
 
     def _register_patterns(self):
@@ -19,18 +24,34 @@ class ChatBot:
             re.IGNORECASE), self.time))
         self.default_handler = self.unknown
 
-    def greet(self, match):
-        return "Здравствуйте! Чем могу помочь?"
+    def _extract_city(self, text):
+        doc = self.nlp(text)
+        for ent in doc.ents:
+            if ent.label_ in ("LOC", "GPE"):
+                lemmas = [token.lemma_ for token in ent]
+                return " ".join(lemmas).strip()
+        return None
 
-    def farewell(self, match):
-        return "До свидания!"
+    def _is_weather_query(self, text):
+        keywords = ["погода", "прогноз", "температура", "градус", "потепление", "похолодание"]
+        return any(kw in text.lower() for kw in keywords)
 
+    def _process_nlp(self, text):
+        if self._is_weather_query(text):
+            city = self._extract_city(text)
+            if city:
+                return get_weather(city), "weather", city
+            else:
+                return "Укажите город в вашем запросе.", "weather_unknown", None
+        return None
+
+    def greet(self, match): return "Здравствуйте! Чем могу помочь?"
+    def farewell(self, match): return "До свидания!"
     def weather(self, match):
         city = match.group(1).strip()
         if not city:
             return "Укажите город."
         return get_weather(city)
-
     def addition(self, match):
         try:
             a = float(match.group(1))
@@ -38,17 +59,29 @@ class ChatBot:
             return f"Результат: {a + b}"
         except ValueError:
             return "Ошибка: введите два числа."
-
     def time(self, match):
         now = datetime.now()
         return now.strftime("Сейчас время %H:%M:%S, %d.%m.%Y")
-
-    def unknown(self, match):
-        return "Извините, я не понимаю ваш запрос."
+    def unknown(self, match): return "Извините, я не понимаю ваш запрос."
 
     def process(self, message: str) -> str:
+        nlp_result = self._process_nlp(message)
+        if nlp_result:
+            response, intent, city = nlp_result
+            self.last_intent, self.last_city = intent, city
+            return response
+
         for pattern, handler in self.patterns:
-            match = pattern.search(message)
-            if match:
-                return handler(match)
-        return self.default_handler(None)
+            if match := pattern.search(message):
+                response = handler(match)
+                # Определяем интент для лога
+                if handler == self.greet: self.last_intent = "greet"
+                elif handler == self.farewell: self.last_intent = "farewell"
+                elif handler == self.addition: self.last_intent = "addition"
+                elif handler == self.time: self.last_intent = "time"
+                else: self.last_intent = "unknown"
+                self.last_city = None
+                return response
+
+        self.last_intent, self.last_city = "unknown", None
+        return self.unknown(None)

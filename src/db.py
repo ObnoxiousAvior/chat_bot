@@ -14,16 +14,22 @@ def init_db():
             bot_response TEXT NOT NULL
         )
     """)
+    cur.execute("PRAGMA table_info(logs)")
+    columns = [col[1] for col in cur.fetchall()]
+    if 'intent' not in columns:
+        cur.execute("ALTER TABLE logs ADD COLUMN intent TEXT")
+    if 'city' not in columns:
+        cur.execute("ALTER TABLE logs ADD COLUMN city TEXT")
     conn.commit()
     conn.close()
 
-def save_log(user_message: str, bot_response: str):
+def log(user_message: str, bot_response: str, intent: str = None, city: str = None):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cur.execute(
-        "INSERT INTO logs (timestamp, user_message, bot_response) VALUES (?, ?, ?)",
-        (timestamp, user_message, bot_response)
+        "INSERT INTO logs (timestamp, user_message, bot_response, intent, city) VALUES (?, ?, ?, ?, ?)",
+        (timestamp, user_message, bot_response, intent, city)
     )
     conn.commit()
     conn.close()

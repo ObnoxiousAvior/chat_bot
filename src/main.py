@@ -1,5 +1,5 @@
 from bot_core import ChatBot
-from db import save_log
+from db import log
 
 def main():
     bot = ChatBot()
@@ -14,7 +14,7 @@ def main():
         response = bot.process(user_input)
         print("Бот:", response)
 
-        save_log(user_input, response)
+        log(user_input, response, bot.last_intent, bot.last_city)
 
         if response == "До свидания!": 
             break
