@@ -3,6 +3,7 @@ from db import log
 
 def main():
     bot = ChatBot()
+    user_id = "default"
 
     print("Приложение чат-бота, выполняющего базовые команды.\n===================\n")
     print("Бот: Привет! Я бот. Я умею:\n- Показывать погоду\n- Складывать числа\n- Показывать время.\n")
@@ -11,10 +12,10 @@ def main():
         if not (user_input := input("Вы: ").strip()): 
             continue
 
-        response = bot.process(user_input)
+        response = bot.process(user_id, user_input)
         print("Бот:", response)
 
-        log(user_input, response, bot.last_intent, bot.last_city)
+        log(user_input, response, bot.log_intent, bot.log_city)
 
         if response == "До свидания!": 
             break

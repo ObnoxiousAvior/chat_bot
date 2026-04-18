@@ -3,13 +3,14 @@ import requests
 API_KEY = "61d9117f73394d6a5b3c86fd8a90b0b9"
 BASE_URL = "http://api.weatherstack.com/current"
 
-def get_weather(city):
+def get_weather(city, date=None):
     if not city:
         return "Укажите название города."
 
     params = {
         "access_key": API_KEY,
         "query": city,
+        "historical_date": date,
         "units": "m"
     }
 
@@ -30,12 +31,16 @@ def get_weather(city):
         current = data["current"]
 
         temperature = current["temperature"]
-
         weather_descriptions = current["weather_descriptions"][0] if current["weather_descriptions"] else "нет данных"
         wind_speed = current["wind_speed"]
 
-        return (f"Погода в {location_name}, {country}: {temperature}°C, "
-                f"{weather_descriptions}, ветер {wind_speed} км/ч")
+        base_response = (f"Погода в {location_name}, {country}: {temperature}°C, "
+                         f"{weather_descriptions}, ветер {wind_speed} км/ч")
+
+        if date:
+            return f"Прогноз на {date} пока не доступен. {base_response}"
+        else:
+            return base_response
 
     except requests.exceptions.Timeout:
         return "Сервер погоды не ответил вовремя. Попробуйте позже."
