@@ -16,7 +16,6 @@ class ChatBot:
         self.nlp = spacy.load("ru_core_news_sm")
 
         self.model = joblib.load("model.pkl")
-        self.vectorizer = joblib.load("vectorizer.pkl")
         self.classes = self.model.classes_
 
         self.user_states = {}
@@ -33,10 +32,8 @@ class ChatBot:
             if not token.is_stop and not token.is_punct:
                 tokens.append(token.lemma_)
         return " ".join(tokens)
-
     def _predict_intent(self, text):
-        processed = self._preprocess(text)
-        vec = self.vectorizer.transform([processed])
+        vec = self.nlp(text).vector.reshape(1, -1)
         proba = self.model.predict_proba(vec)[0]
         confidence = max(proba)
         intent = self.model.predict(vec)[0]

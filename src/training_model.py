@@ -1,14 +1,15 @@
 import os
+import numpy as np
 import pandas as pd
 import spacy
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score
 import joblib
 
+
 DATASET_FILE = "dataset.csv"
-SAMPLES_PER_INTENT = 40
+SAMPLES_PER_INTENT = 60
 
 INTENT_EXAMPLES = {
     "greeting": [
@@ -23,7 +24,9 @@ INTENT_EXAMPLES = {
         "здравствуйте, который час", "привет, сумма чисел", "добрый день, погода",
         "приветствую, пока", "здравствуйте, до свидания", "добрый вечер, что нового",
         "привет, как тебя зовут", "здравствуйте, я хочу узнать погоду",
-        "привет, сложи два числа", "доброе утро, сколько времени"
+        "привет, сложи два числа", "доброе утро, сколько времени",
+        "здравствуйте, извините, не подскажете?", "привет, давно не виделись",
+        "доброго здоровья", "моё почтение", "здравствуйте, очень приятно"
     ],
     "goodbye": [
         "пока", "до свидания", "всего хорошего", "удачи", "до встречи",
@@ -35,7 +38,8 @@ INTENT_EXAMPLES = {
         "пока, спасибо за помощь", "до свидания, пока", "удачи, бот",
         "прощай, до новых встреч", "все, пока", "до скорого, бот",
         "счастливо, пока", "до свидания, я выхожу", "пока, всего хорошего",
-        "до встречи, пока", "прощайте, бот", "увидимся, пока", "все, до свидания"
+        "до встречи, пока", "прощайте, бот", "увидимся, пока", "все, до свидания",
+        "бывайте здоровы", "разрешите откланяться", "пока, спасибо за общение"
     ],
     "addition": [
         "сумма 5 10", "сложи 2 и 3", "5 плюс 7", "сколько будет 12 + 15",
@@ -47,7 +51,9 @@ INTENT_EXAMPLES = {
         "сложи 9 и 8", "прибавь 10 к 10", "сумма 25 и 25", "сложи 0.5 и 0.5",
         "сколько будет 4 + 4", "сумма 3 и 7", "сложи 6 и 4", "8 + 2",
         "прибавь 1 к 1", "сумма 12 и 8", "сложи 15 и 5", "20 + 30",
-        "сколько будет 2 + 2", "сумма 1 и 2", "сложи 10 и 20", "прибавь 50 к 50"
+        "сколько будет 2 + 2", "сумма 1 и 2", "сложи 10 и 20", "прибавь 50 к 50",
+        "вычисли 123 + 456", "прибавь 7.5 к 2.3", "сложи числа 9 и 11",
+        "найди сумму 40 и 60", "сколько будет 1000 плюс 2000"
     ],
     "time": [
         "сколько времени", "который час", "текущее время", "дата и время",
@@ -60,7 +66,8 @@ INTENT_EXAMPLES = {
         "какое число сегодня", "какой сегодня день недели", "время по гринвичу",
         "который час по местному", "сколько минут", "текущий час", "дата и время сейчас",
         "покажи текущее время", "сколько времени сейчас", "который час, бот",
-        "какая сегодня дата", "время в россии"
+        "какая сегодня дата", "время в россии", "подскажите точное время",
+        "который час на ваших часах", "сегодня какое число", "день недели какой"
     ],
     "weather": [
         "погода в москве", "какая погода", "будет ли дождь", "прогноз погоды",
@@ -72,32 +79,11 @@ INTENT_EXAMPLES = {
         "прогноз на выходные", "температура воздуха", "что за погода", "погода на неделю",
         "какая погода завтра", "погода в россии", "температура в спб", "погода в киеве",
         "прогноз погоды на завтра", "будет ли дождь сегодня", "снег ли", "ветер какой",
-        "погода в краснодаре", "погода в воронеже", "погода в самаре", "погода в омске"
+        "погода в краснодаре", "погода в воронеже", "погода в самаре", "погода в омске",
+        "узнай погоду в рязани", "какая сегодня погода, интересно?", "не подскажете погоду?",
+        "что там на улице? тепло?", "стоит ли брать зонт?", "прогноз на сегодня в москве"
     ]
 }
-
-def create_dataset():
-    """Создаёт dataset.csv с SAMPLES_PER_INTENT примерами на каждый интент."""
-    if os.path.exists(DATASET_FILE):
-        print(f"Файл {DATASET_FILE} уже существует. Пропускаем создание.")
-        return pd.read_csv(DATASET_FILE)
-
-    data = []
-    for intent, examples in INTENT_EXAMPLES.items():
-        # Берем первые SAMPLES_PER_INTENT примеров (если их меньше, повторим)
-        needed = SAMPLES_PER_INTENT
-        if len(examples) < needed:
-            # Повторяем примеры, чтобы набрать нужное количество
-            import itertools
-            examples = list(itertools.islice(itertools.cycle(examples), needed))
-        else:
-            examples = examples[:needed]
-        data.extend([{"text": ex, "intent": intent} for ex in examples])
-
-    df = pd.DataFrame(data)
-    df.to_csv(DATASET_FILE, index=False, encoding="utf-8")
-    print(f"Датасет сохранён в {DATASET_FILE}, всего строк: {len(df)}")
-    return df
 
 def load_spacy_model():
     try:
@@ -111,32 +97,47 @@ def load_spacy_model():
 
 nlp = load_spacy_model()
 
-def preprocess(text):
-    """Лемматизация, удаление стоп-слов и пунктуации."""
-    doc = nlp(text.lower())
-    tokens = []
-    for token in doc:
-        if not token.is_stop and not token.is_punct and not token.is_space:
-            tokens.append(token.lemma_)
-    return " ".join(tokens)
+def create_dataset():
+    if os.path.exists(DATASET_FILE):
+        print(f"Файл {DATASET_FILE} уже существует. Пропускаем создание.")
+        return pd.read_csv(DATASET_FILE)
+
+    data = []
+    for intent, examples in INTENT_EXAMPLES.items():
+        needed = SAMPLES_PER_INTENT
+        if len(examples) < needed:
+            import itertools
+            examples = list(itertools.islice(itertools.cycle(examples), needed))
+        else:
+            examples = examples[:needed]
+        data.extend([{"text": ex, "intent": intent} for ex in examples])
+
+    df = pd.DataFrame(data)
+    df.to_csv(DATASET_FILE, index=False, encoding="utf-8")
+    print(f"Датасет сохранён в {DATASET_FILE}, всего строк: {len(df)}")
+    return df
+
+def text_to_vector(text):
+    doc = nlp(text)
+    return doc.vector 
 
 def train_and_save():
     df = create_dataset()
     texts = df["text"].tolist()
     labels = df["intent"].tolist()
 
-    print("Выполняется предобработка текстов...")
-    processed_texts = [preprocess(t) for t in texts]
+    print("Получение векторных представлений через spaCy...")
+    vectors = [text_to_vector(t) for t in texts]
+    X = np.array(vectors)
+    y = np.array(labels)
 
-    print("Векторизация...")
-    vectorizer = TfidfVectorizer()
-    X = vectorizer.fit_transform(processed_texts)
+    print(f"Размер матрицы признаков: {X.shape}")
 
     X_train, X_test, y_train, y_test = train_test_split(
-        X, labels, test_size=0.2, random_state=42, stratify=labels
+        X, y, test_size=0.2, random_state=42, stratify=y
     )
 
-    print("Обучение логистической регрессии...")
+    print("Обучение классификатора на эмбеддингах...")
     model = LogisticRegression(max_iter=1000, random_state=42)
     model.fit(X_train, y_train)
 
@@ -147,20 +148,18 @@ def train_and_save():
     print(classification_report(y_test, y_pred, zero_division=0))
 
     joblib.dump(model, "model.pkl")
-    joblib.dump(vectorizer, "vectorizer.pkl")
-    print("Модель и векторизатор сохранены в model.pkl и vectorizer.pkl")
+    print("Модель сохранена в model.pkl")
 
     test_texts = [
-        "привет",
-        "погода в москве",
-        "сколько времени",
-        "сумма 5 10",
-        "пока"
+        "привет", "здравствуйте, как ваши дела?",
+        "погода в москве", "что там с погодой сегодня?", "что по погоде?",
+        "сколько времени", "который час, не подскажете?",
+        "сумма 5 10", "сложи 23 и 45",
+        "пока", "до свидания, спасибо за помощь"
     ]
-    print("\nПримеры предсказаний:")
+    print("\nПримеры предсказаний (Word Embeddings):")
     for t in test_texts:
-        proc = preprocess(t)
-        vec = vectorizer.transform([proc])
+        vec = text_to_vector(t).reshape(1, -1)
         pred = model.predict(vec)[0]
         proba = max(model.predict_proba(vec)[0])
         print(f"'{t}' -> {pred} (уверенность: {proba:.2f})")
