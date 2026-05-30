@@ -1,73 +1,71 @@
 import os
-import numpy as np
 import pandas as pd
-import spacy
-from sklearn.linear_model import LogisticRegression
+import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, accuracy_score
-import joblib
+from sklearn.metrics import accuracy_score, classification_report
+import torch
+from transformers import (
+    AutoTokenizer,
+    AutoModelForSequenceClassification,
+    TrainingArguments,
+    Trainer,
+    EarlyStoppingCallback
+)
+from datasets import Dataset
 
-
+MODEL_NAME = "DeepPavlov/rubert-base-cased"
+OUTPUT_DIR = "intent_model"
 DATASET_FILE = "dataset.csv"
-SAMPLES_PER_INTENT = 60
+NUM_EPOCHS = 5
+BATCH_SIZE = 8
+LEARNING_RATE = 2e-5
+MAX_LENGTH = 64
+EARLY_STOPPING_PATIENCE = 2
 
+# Расширенные примеры интентов (25–30+ фраз на каждый)
 INTENT_EXAMPLES = {
     "greeting": [
         "привет", "здравствуйте", "добрый день", "доброе утро", "добрый вечер",
-        "приветствую", "здравия желаю", "здравствуй", "приветик", "хай",
-        "здорово", "приветствую вас", "доброго времени суток", "салют",
-        "здравствуйте, как дела", "привет, как жизнь", "добрый день, чем занимаетесь",
-        "здравствуйте, это бот?", "привет, я пользователь", "здравствуйте, помогите",
-        "приветствую, бот", "здравствуйте, я здесь впервые", "привет, погода",
-        "здравствуйте, как настроение", "добрый день, есть вопросы",
-        "привет, я новенький", "здравствуйте, мне нужна помощь", "доброе утро, бот",
-        "здравствуйте, который час", "привет, сумма чисел", "добрый день, погода",
-        "приветствую, пока", "здравствуйте, до свидания", "добрый вечер, что нового",
-        "привет, как тебя зовут", "здравствуйте, я хочу узнать погоду",
-        "привет, сложи два числа", "доброе утро, сколько времени",
-        "здравствуйте, извините, не подскажете?", "привет, давно не виделись",
-        "доброго здоровья", "моё почтение", "здравствуйте, очень приятно"
+        "приветствую", "здравия желаю", "приветик", "хай", "здорово",
+        "салют", "доброго времени суток", "привет, как дела", "здравствуйте, как жизнь",
+        "добрый день, чем занимаетесь", "привет, я новенький", "здравствуйте, это бот?",
+        "приветствую вас", "здравствуйте, очень приятно", "моё почтение",
+        "доброго здоровья", "привет, давно не виделись", "здравствуйте, извините",
+        "добрый вечер, что нового", "привет, как тебя зовут", "здравствуйте, я здесь впервые",
+        "привет, погода", "здравствуйте, помогите", "доброе утро, бот"
     ],
     "goodbye": [
         "пока", "до свидания", "всего хорошего", "удачи", "до встречи",
         "прощай", "пока пока", "бывай", "счастливо", "до скорого",
         "пока, бот", "до свидания, спасибо", "всего доброго", "до связи",
-        "увидимся", "пока, пока", "до завтра", "пока, пока, пока",
-        "прощайте", "до свидания, приятно было пообщаться", "все, я ухожу",
-        "пока, удачи", "до встречи, бот", "всего наилучшего", "счастливо оставаться",
-        "пока, спасибо за помощь", "до свидания, пока", "удачи, бот",
-        "прощай, до новых встреч", "все, пока", "до скорого, бот",
-        "счастливо, пока", "до свидания, я выхожу", "пока, всего хорошего",
-        "до встречи, пока", "прощайте, бот", "увидимся, пока", "все, до свидания",
-        "бывайте здоровы", "разрешите откланяться", "пока, спасибо за общение"
+        "увидимся", "прощайте", "до завтра", "все, я ухожу", "счастливо оставаться",
+        "пока, удачи", "до встречи, бот", "всего наилучшего", "прощай, до новых встреч",
+        "до свидания, пока", "удачи, бот", "бывайте здоровы", "разрешите откланяться",
+        "пока, спасибо за общение", "до свидания, приятно было пообщаться"
     ],
     "addition": [
         "сумма 5 10", "сложи 2 и 3", "5 плюс 7", "сколько будет 12 + 15",
         "прибавь 8 к 3", "10 + 20", "сложи 4 и 6", "сумма чисел 9 и 1",
-        "1 + 1", "100 + 200", "сложи 5.5 и 2.5", "15 + 15",
-        "прибавь 7 к 8", "сколько получится 3 + 4", "сумма 8 и 9",
-        "сложи 12 и 7", "5 плюс 5", "10 + 5", "прибавь 2 к 2",
-        "сумма 1000 и 500", "сложи 1.2 и 3.4", "5 + 3", "7 + 2",
-        "сложи 9 и 8", "прибавь 10 к 10", "сумма 25 и 25", "сложи 0.5 и 0.5",
-        "сколько будет 4 + 4", "сумма 3 и 7", "сложи 6 и 4", "8 + 2",
-        "прибавь 1 к 1", "сумма 12 и 8", "сложи 15 и 5", "20 + 30",
-        "сколько будет 2 + 2", "сумма 1 и 2", "сложи 10 и 20", "прибавь 50 к 50",
-        "вычисли 123 + 456", "прибавь 7.5 к 2.3", "сложи числа 9 и 11",
+        "1 + 1", "100 + 200", "сложи 5.5 и 2.5", "15 + 15", "прибавь 7 к 8",
+        "сколько получится 3 + 4", "сумма 8 и 9", "сложи 12 и 7", "5 плюс 5",
+        "10 + 5", "прибавь 2 к 2", "сумма 1000 и 500", "сложи 1.2 и 3.4",
+        "5 + 3", "7 + 2", "сложи 9 и 8", "прибавь 10 к 10", "сумма 25 и 25",
+        "сложи 0.5 и 0.5", "сколько будет 4 + 4", "сумма 3 и 7", "сложи 6 и 4",
+        "8 + 2", "прибавь 1 к 1", "сумма 12 и 8", "сложи 15 и 5", "20 + 30",
+        "сколько будет 2 + 2", "вычисли 123 + 456", "прибавь 7.5 к 2.3",
         "найди сумму 40 и 60", "сколько будет 1000 плюс 2000"
     ],
     "time": [
         "сколько времени", "который час", "текущее время", "дата и время",
-        "какой сегодня день", "какая дата", "какое сегодня число",
-        "покажи время", "часы", "время", "сейчас сколько", "точное время",
-        "который сейчас час", "дата", "сегодняшняя дата", "число",
-        "день недели", "какой день", "сколько сейчас времени", "время московское",
-        "который час в москве", "дата сегодня", "текущая дата", "часы и минуты",
-        "покажи дату", "сколько часов", "который час сейчас", "текущее время и дата",
-        "какое число сегодня", "какой сегодня день недели", "время по гринвичу",
-        "который час по местному", "сколько минут", "текущий час", "дата и время сейчас",
-        "покажи текущее время", "сколько времени сейчас", "который час, бот",
-        "какая сегодня дата", "время в россии", "подскажите точное время",
-        "который час на ваших часах", "сегодня какое число", "день недели какой"
+        "какой сегодня день", "какая дата", "какое сегодня число", "покажи время",
+        "часы", "время", "сейчас сколько", "точное время", "который сейчас час",
+        "дата", "сегодняшняя дата", "число", "день недели", "какой день",
+        "сколько сейчас времени", "время московское", "который час в москве",
+        "дата сегодня", "текущая дата", "часы и минуты", "покажи дату",
+        "сколько часов", "который час сейчас", "текущее время и дата",
+        "какое число сегодня", "какой сегодня день недели", "сколько минут",
+        "текущий час", "дата и время сейчас", "покажи текущее время", "который час, бот",
+        "какая сегодня дата", "время в россии", "подскажите точное время"
     ],
     "weather": [
         "погода в москве", "какая погода", "будет ли дождь", "прогноз погоды",
@@ -85,84 +83,127 @@ INTENT_EXAMPLES = {
     ]
 }
 
-def load_spacy_model():
-    try:
-        nlp = spacy.load("ru_core_news_sm")
-    except OSError:
-        print("Модель ru_core_news_sm не найдена. Скачиваем...")
-        import subprocess
-        subprocess.run(["python", "-m", "spacy", "download", "ru_core_news_sm"])
-        nlp = spacy.load("ru_core_news_sm")
-    return nlp
-
-nlp = load_spacy_model()
-
+# ====================== ПОДГОТОВКА ДАТАСЕТА ======================
 def create_dataset():
     if os.path.exists(DATASET_FILE):
-        print(f"Файл {DATASET_FILE} уже существует. Пропускаем создание.")
+        print(f"Файл {DATASET_FILE} уже существует. Загружаем его.")
         return pd.read_csv(DATASET_FILE)
 
     data = []
-    for intent, examples in INTENT_EXAMPLES.items():
-        needed = SAMPLES_PER_INTENT
-        if len(examples) < needed:
-            import itertools
-            examples = list(itertools.islice(itertools.cycle(examples), needed))
-        else:
-            examples = examples[:needed]
-        data.extend([{"text": ex, "intent": intent} for ex in examples])
+    for intent, phrases in INTENT_EXAMPLES.items():
+        for phrase in phrases:
+            data.append({"text": phrase, "intent": intent})
 
     df = pd.DataFrame(data)
     df.to_csv(DATASET_FILE, index=False, encoding="utf-8")
-    print(f"Датасет сохранён в {DATASET_FILE}, всего строк: {len(df)}")
+    print(f"Создан датасет: {len(df)} строк, классы: {df['intent'].unique()}")
     return df
 
-def text_to_vector(text):
-    doc = nlp(text)
-    return doc.vector 
-
-def train_and_save():
-    df = create_dataset()
-    texts = df["text"].tolist()
-    labels = df["intent"].tolist()
-
-    print("Получение векторных представлений через spaCy...")
-    vectors = [text_to_vector(t) for t in texts]
-    X = np.array(vectors)
-    y = np.array(labels)
-
-    print(f"Размер матрицы признаков: {X.shape}")
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
+# ====================== FINE-TUNING ======================
+def tokenize_function(examples, tokenizer):
+    return tokenizer(
+        examples["text"],
+        padding="max_length",
+        truncation=True,
+        max_length=MAX_LENGTH
     )
 
-    print("Обучение классификатора на эмбеддингах...")
-    model = LogisticRegression(max_iter=1000, random_state=42)
-    model.fit(X_train, y_train)
+def train():
+    # Загрузка датасета
+    df = create_dataset()
+    label_list = sorted(df["intent"].unique())
+    label2id = {label: i for i, label in enumerate(label_list)}
+    id2label = {i: label for label, i in label2id.items()}
+    df["label"] = df["intent"].map(label2id)
 
-    y_pred = model.predict(X_test)
-    accuracy = accuracy_score(y_test, y_pred)
-    print(f"Accuracy: {accuracy:.4f}")
-    print("\nClassification Report:")
-    print(classification_report(y_test, y_pred, zero_division=0))
+    # Разделение на train/val
+    train_df, val_df = train_test_split(
+        df, test_size=0.2, random_state=42, stratify=df["label"]
+    )
+    print(f"Train: {len(train_df)}, Val: {len(val_df)}")
 
-    joblib.dump(model, "model.pkl")
-    print("Модель сохранена в model.pkl")
+    # Конвертация в datasets.Dataset
+    train_dataset = Dataset.from_pandas(train_df[["text", "label"]])
+    val_dataset = Dataset.from_pandas(val_df[["text", "label"]])
 
-    test_texts = [
-        "привет", "здравствуйте, как ваши дела?",
-        "погода в москве", "что там с погодой сегодня?", "что по погоде?",
-        "сколько времени", "который час, не подскажете?",
-        "сумма 5 10", "сложи 23 и 45",
-        "пока", "до свидания, спасибо за помощь"
-    ]
-    print("\nПримеры предсказаний (Word Embeddings):")
-    for t in test_texts:
-        vec = text_to_vector(t).reshape(1, -1)
-        pred = model.predict(vec)[0]
-        proba = max(model.predict_proba(vec)[0])
-        print(f"'{t}' -> {pred} (уверенность: {proba:.2f})")
+    # Загрузка токенизатора и модели
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    model = AutoModelForSequenceClassification.from_pretrained(
+        MODEL_NAME,
+        num_labels=len(label_list),
+        id2label=id2label,
+        label2id=label2id
+    )
+
+    # Токенизация
+    train_dataset = train_dataset.map(
+        lambda x: tokenize_function(x, tokenizer), batched=True
+    )
+    val_dataset = val_dataset.map(
+        lambda x: tokenize_function(x, tokenizer), batched=True
+    )
+
+    # Удаляем ненужные колонки
+    train_dataset = train_dataset.remove_columns(["text", "__index_level_0__"])
+    val_dataset = val_dataset.remove_columns(["text", "__index_level_0__"])
+    train_dataset.set_format("torch")
+    val_dataset.set_format("torch")
+
+    # Аргументы обучения
+    training_args = TrainingArguments(
+        output_dir="./results",
+        eval_strategy="epoch",
+        save_strategy="epoch",
+        learning_rate=LEARNING_RATE,
+        per_device_train_batch_size=BATCH_SIZE,
+        per_device_eval_batch_size=BATCH_SIZE,
+        num_train_epochs=NUM_EPOCHS,
+        weight_decay=0.01,
+        logging_dir="./logs",
+        logging_steps=10,
+        load_best_model_at_end=True,
+        metric_for_best_model="accuracy",
+        save_total_limit=2,
+        fp16=torch.cuda.is_available(),
+    )
+
+    # Функция метрик
+    def compute_metrics(eval_pred):
+        predictions, labels = eval_pred
+        preds = np.argmax(predictions, axis=1)
+        acc = accuracy_score(labels, preds)
+        return {"accuracy": acc}
+
+    # Trainer с early stopping
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
+        processing_class=tokenizer,
+        compute_metrics=compute_metrics,
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=EARLY_STOPPING_PATIENCE)]
+    )
+
+    # Обучение
+    print("Начинаем fine-tuning...")
+    trainer.train()
+
+    # Оценка на валидации
+    eval_results = trainer.evaluate()
+    print(f"Validation accuracy: {eval_results['eval_accuracy']:.4f}")
+
+    # Сохранение модели и токенизатора
+    model.save_pretrained(OUTPUT_DIR)
+    tokenizer.save_pretrained(OUTPUT_DIR)
+    print(f"Модель сохранена в {OUTPUT_DIR}")
+
+    # Дополнительно: классификационный отчёт на валидации
+    predictions = trainer.predict(val_dataset)
+    pred_labels = np.argmax(predictions.predictions, axis=1)
+    true_labels = predictions.label_ids
+    print("\nClassification Report (validation):")
+    print(classification_report(true_labels, pred_labels, target_names=label_list))
 
 if __name__ == "__main__":
-    train_and_save()
+    train()

@@ -1,7 +1,8 @@
 import re
-import joblib
+import torch
 import spacy
 
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from datetime import datetime
 from weather_api import get_weather
 from db import init_db
@@ -12,11 +13,14 @@ class DialogState:
     WAIT_DATE = "wait_date"
 
 class ChatBot:
-    def __init__(self):
+    def __init__(self ,model_path="intent_model"):
         self.nlp = spacy.load("ru_core_news_sm")
 
-        self.model = joblib.load("model.pkl")
-        self.classes = self.model.classes_
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+        self.model = AutoModelForSequenceClassification.from_pretrained(model_path)
+        self.model.to(self.device)
+        self.model.eval()
 
         self.user_states = {}
         self.user_data = {}
@@ -25,18 +29,25 @@ class ChatBot:
 
         init_db()
 
-    def _preprocess(self, text):
-        doc = self.nlp(text)
-        tokens = []
-        for token in doc:
-            if not token.is_stop and not token.is_punct:
-                tokens.append(token.lemma_)
-        return " ".join(tokens)
-    def _predict_intent(self, text):
-        vec = self.nlp(text).vector.reshape(1, -1)
-        proba = self.model.predict_proba(vec)[0]
-        confidence = max(proba)
-        intent = self.model.predict(vec)[0]
+    def _predict_intent(self, text: str) -> tuple:
+        inputs = self.tokenizer(
+            text,
+            return_tensors="pt",
+            truncation=True,
+            padding=True,
+            max_length=64
+        ).to(self.device)
+
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            logits = outputs.logits
+            probs = torch.softmax(logits, dim=1)
+            confidence, pred_idx = torch.max(probs, dim=1)
+            pred_idx = pred_idx.item()
+            confidence = confidence.item()
+
+        id2label = self.model.config.id2label
+        intent = id2label[pred_idx]
         return intent, confidence
     
     def _get_state(self, user_id):
